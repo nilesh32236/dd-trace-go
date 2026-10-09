@@ -204,6 +204,8 @@ type Config struct {
 	otlpLogsEndpoint string
 	otlpLogsHeaders  map[string]string
 	otlpLogsTimeout  time.Duration
+	// Retain the source so HTTP export only appends /v1/logs to generic endpoints.
+	otlpLogsEndpointIsGeneric bool
 	// traceProtocol is the Datadog trace protocol version the user requested
 	// (TraceProtocolV04 or TraceProtocolV1). This is independent of whether the
 	// trace-agent actually supports it — see RequestedTraceProtocol's doc.
@@ -508,6 +510,7 @@ func loadConfig() *Config {
 	}
 	logsEndpoint, genericEndpoint := logs.endpoints(p)
 	cfg.otlpLogsEndpoint = cmp.Or(logsEndpoint, genericEndpoint)
+	cfg.otlpLogsEndpointIsGeneric = logsEndpoint == ""
 	cfg.otlpLogsHeaders = logs.headers(p)
 	cfg.otlpLogsProtocol = logs.protocol(p)
 	cfg.otlpLogsTimeout = logs.timeout(p)
@@ -1694,6 +1697,14 @@ func (c *Config) OTLPLogsEndpoint() string {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.otlpLogsEndpoint
+}
+
+// OTLPLogsEndpointIsGeneric reports whether HTTP export must append /v1/logs.
+// The source must be retained even when both endpoint settings have the same URL.
+func (c *Config) OTLPLogsEndpointIsGeneric() bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.otlpLogsEndpointIsGeneric
 }
 
 // OTLPLogsHeaders returns a copy of the resolved OTLP logs headers.
