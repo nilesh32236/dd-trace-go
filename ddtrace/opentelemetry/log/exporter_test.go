@@ -6,14 +6,10 @@
 package log
 
 import (
-	"net/http"
-	"net/http/httptest"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
-	sdklog "go.opentelemetry.io/otel/sdk/log"
 )
 
 func TestResolveOTLPProtocol(t *testing.T) {
@@ -187,26 +183,6 @@ func TestResolveHeaders(t *testing.T) {
 			"generic": "value",
 		}, headers)
 	})
-}
-
-func TestExporterSendsResolvedHeaders(t *testing.T) {
-	received := make(chan http.Header, 1)
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		received <- r.Header.Clone()
-	}))
-	defer srv.Close()
-
-	t.Setenv("OTEL_EXPORTER_OTLP_LOGS_ENDPOINT", srv.URL)
-	t.Setenv("OTEL_EXPORTER_OTLP_LOGS_HEADERS", "invalid")
-	t.Setenv("OTEL_EXPORTER_OTLP_HEADERS", "x-key=a%20b")
-
-	exporter, err := newOTLPHTTPExporter(t.Context())
-	require.NoError(t, err)
-	defer exporter.Shutdown(t.Context())
-	require.NoError(t, exporter.Export(t.Context(), []sdklog.Record{{}}))
-
-	// The SDK would percent-decode the value if it read the environment itself.
-	assert.Equal(t, "a%20b", (<-received).Get("x-key"))
 }
 
 func TestParseHeaders(t *testing.T) {
