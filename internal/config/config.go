@@ -204,8 +204,8 @@ type Config struct {
 	otlpLogsEndpoint string
 	otlpLogsHeaders  map[string]string
 	otlpLogsTimeout  time.Duration
-	// Retain the source so HTTP export only appends /v1/logs to generic endpoints.
-	otlpLogsEndpointIsGeneric bool
+	// Resolved HTTP URL; empty when the exporter should use its agent fallback.
+	otlpLogsHTTPURL string
 	// traceProtocol is the Datadog trace protocol version the user requested
 	// (TraceProtocolV04 or TraceProtocolV1). This is independent of whether the
 	// trace-agent actually supports it — see RequestedTraceProtocol's doc.
@@ -474,7 +474,7 @@ func loadConfig() *Config {
 	traces := otlpSignal{name: "TRACES", validEndpoint: isOTLPHTTPURL, warn: cfg.otlpExportMode}
 	tracesEndpoint, genericEndpoint := traces.endpoints(p)
 	cfg.otlpEndpoint = resolveOTLPEndpoint(cfg.agentURL, genericEndpoint)
-	cfg.otlpTraceURL = resolveOTLPTraceURL(tracesEndpoint, cfg.otlpEndpoint)
+	cfg.otlpTraceURL = resolveOTLPSignalURL(tracesEndpoint, cfg.otlpEndpoint, otlpTracesPath, false)
 	cfg.otlpTraceURLDerivedFromAgent = tracesEndpoint == "" && genericEndpoint == ""
 	cfg.otlpTraceHeaders = buildOTLPTraceHeaders(traces.headers(p))
 	v, origin := p.GetBoolWithOrigin("OTEL_TRACES_SPAN_METRICS_ENABLED", false)
@@ -498,7 +498,7 @@ func loadConfig() *Config {
 		warn:          cfg.OTLPSpanMetricsEnabled(),
 	}
 	metricsEndpoint, genericEndpoint := metrics.endpoints(p)
-	cfg.otlpMetricsURL = resolveOTLPMetricsURL(metricsEndpoint, resolveOTLPEndpoint(cfg.agentURL, genericEndpoint))
+	cfg.otlpMetricsURL = resolveOTLPSignalURL(metricsEndpoint, resolveOTLPEndpoint(cfg.agentURL, genericEndpoint), otlpMetricsPath, false)
 	cfg.otlpMetricsHeaders = metrics.headers(p)
 	cfg.otlpMetricsProtocol = metrics.protocol(p)
 	cfg.otlpMetricsFlushInterval = resolveOTLPMetricsFlushInterval(env.Get("_DD_TRACE_STATS_INTERVAL"))
@@ -510,7 +510,9 @@ func loadConfig() *Config {
 	}
 	logsEndpoint, genericEndpoint := logs.endpoints(p)
 	cfg.otlpLogsEndpoint = cmp.Or(logsEndpoint, genericEndpoint)
-	cfg.otlpLogsEndpointIsGeneric = logsEndpoint == ""
+	if cfg.otlpLogsEndpoint != "" {
+		cfg.otlpLogsHTTPURL = resolveOTLPSignalURL(logsEndpoint, genericEndpoint, otlpLogsPath, true)
+	}
 	cfg.otlpLogsHeaders = logs.headers(p)
 	cfg.otlpLogsProtocol = logs.protocol(p)
 	cfg.otlpLogsTimeout = logs.timeout(p)
@@ -1699,12 +1701,12 @@ func (c *Config) OTLPLogsEndpoint() string {
 	return c.otlpLogsEndpoint
 }
 
-// OTLPLogsEndpointIsGeneric reports whether HTTP export must append /v1/logs.
-// The source must be retained even when both endpoint settings have the same URL.
-func (c *Config) OTLPLogsEndpointIsGeneric() bool {
+// OTLPLogsHTTPURL returns the resolved HTTP logs URL, or an empty string when
+// the exporter should derive its endpoint from the agent configuration.
+func (c *Config) OTLPLogsHTTPURL() string {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	return c.otlpLogsEndpointIsGeneric
+	return c.otlpLogsHTTPURL
 }
 
 // OTLPLogsHeaders returns a copy of the resolved OTLP logs headers.
@@ -1749,7 +1751,7 @@ func (c *Config) ResolveOTelSemanticsConfig() {
 		return
 	}
 	if c.otlpTraceURLDerivedFromAgent {
-		c.otlpTraceURL = resolveOTLPTraceURL("", resolveOTLPEndpoint(c.agentURL, ""))
+		c.otlpTraceURL = resolveOTLPSignalURL("", resolveOTLPEndpoint(c.agentURL, ""), otlpTracesPath, false)
 	}
 	c.disableAutomaticPeerService()
 }
